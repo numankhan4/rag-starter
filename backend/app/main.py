@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -11,6 +9,7 @@ from pydantic import BaseModel, Field
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_text
 from .embeddings import HashingEmbedder
+from .settings import Settings
 from .store import InMemoryVectorStore
 
 
@@ -27,7 +26,7 @@ class IngestResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
-    k: int = Field(default=4, ge=1, le=20)
+    k: int | None = Field(default=None, ge=1, le=20)
 
 
 class Source(BaseModel):
@@ -45,10 +44,12 @@ class QueryResponse(BaseModel):
     sources: list[Source]
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or Settings.from_env()
     app = FastAPI(title="rag-starter", version="0.1.0")
-    origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["*"], allow_headers=["*"]
+    )
 
     embedder = HashingEmbedder()
     store = InMemoryVectorStore()
@@ -62,7 +63,7 @@ def create_app() -> FastAPI:
     @app.post("/ingest", response_model=IngestResponse)
     def ingest(req: IngestRequest) -> IngestResponse:
         store.delete_document(req.doc_id)
-        chunks = chunk_text(req.doc_id, req.text)
+        chunks = chunk_text(req.doc_id, req.text, settings.chunk_size, settings.chunk_overlap)
         if not chunks:
             raise HTTPException(status_code=422, detail="Document has no text")
         store.add(chunks, embedder.embed([c.text for c in chunks]))
@@ -79,7 +80,7 @@ def create_app() -> FastAPI:
 
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest) -> QueryResponse:
-        hits = store.search(embedder.embed([req.question])[0], k=req.k)
+        hits = store.search(embedder.embed([req.question])[0], k=req.k or settings.top_k)
         result = answerer.answer(req.question, hits)
         sources = [
             Source(

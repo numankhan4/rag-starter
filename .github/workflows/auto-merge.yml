@@ -1,0 +1,69 @@
+name: Auto-merge low-risk
+
+# Deterministic (no AI) classification of every PR:
+#   low-risk  = only docs/markdown/tests changed, or a Dependabot patch/minor bump
+#               -> auto-merge (squash) once required CI passes
+#   otherwise = labeled needs-review; auto-merge is disabled; you merge it.
+# Anything touching .github/ or package.json (non-Dependabot) is never low-risk.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  classify:
+    if: >-
+      (vars.AUTOMATION_ENABLED == 'true' || github.actor == 'dependabot[bot]') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Dependabot metadata
+        id: dep
+        if: github.actor == 'dependabot[bot]'
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Classify and act
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=$(gh pr diff "$PR" --repo "$REPO" --name-only)
+          echo "Changed files:"; echo "$files"
+
+          risk=low
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            case "${{ steps.dep.outputs.update-type }}" in
+              version-update:semver-patch|version-update:semver-minor) risk=low ;;
+              *) risk=high ;;
+            esac
+          else
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                .github/*) risk=high ;;
+                docs/*|*.md|backend/tests/*|frontend/lib/*.test.ts|LICENSE) ;;
+                *) risk=high ;;
+              esac
+            done <<< "$files"
+          fi
+
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then risk=high; fi
+          echo "Risk: $risk"
+
+          if [ "$risk" = low ]; then
+            gh pr edit "$PR" --repo "$REPO" --add-label low-risk --remove-label needs-review || true
+            gh pr merge "$PR" --repo "$REPO" --auto --squash --delete-branch
+          else
+            gh pr edit "$PR" --repo "$REPO" --add-label needs-review --remove-label low-risk || true
+            gh pr merge "$PR" --repo "$REPO" --disable-auto 2>/dev/null || true
+          fi

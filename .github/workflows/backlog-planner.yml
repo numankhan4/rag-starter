@@ -1,0 +1,68 @@
+name: Backlog planner
+
+# Weekly: if fewer than 5 roadmap issues are open, Claude proposes up to 5 new,
+# small, well-scoped issues based on ROADMAP.md and the current code.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1" # Mondays, 09:41 Pakistan time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+jobs:
+  plan:
+    if: vars.AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check backlog size
+        id: size
+        run: |
+          n=$(gh issue list --label roadmap --state open --limit 200 --json number --jq length)
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          mkdir -p .auto
+          gh issue list --label roadmap --state all --limit 300 --json number,title,state \
+            --jq '.[] | "#\(.number) [\(.state)] \(.title)"' > .auto/EXISTING.md
+
+      - name: Propose issues with Claude
+        if: fromJSON(steps.size.outputs.open) < 5
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Read CLAUDE.md, ROADMAP.md, README.md and the code in backend/ and frontend/.
+            Existing issues (do not duplicate) are listed in .auto/EXISTING.md.
+            Propose exactly 5 next issues that move the roadmap forward. Each must be completable
+            in one focused PR (< ~300 changed lines) with clear acceptance criteria and tests.
+            Never propose changes to .github/, publishing, or secrets.
+            Favour work that makes the project more useful and credible to other developers:
+            real provider adapters (Claude, Voyage/OpenAI embeddings, pgvector/Qdrant) behind the existing
+            protocols, an evaluation harness, streaming chat UX, docs and deploy guides, accessibility.
+            Write them to .auto/NEW_ISSUES.json as a JSON array of
+            {"title": string, "body": string (Markdown with "## Goal" and "## Acceptance criteria"), "area": one of "backend"|"retrieval"|"llm"|"frontend"|"evals"|"infra"|"docs"}.
+            Write nothing else.
+          claude_args: |
+            --model sonnet
+            --max-turns 15
+            --allowedTools Read,Glob,Grep,LS,Write
+
+      - name: Create issues
+        if: fromJSON(steps.size.outputs.open) < 5
+        run: |
+          [ -f .auto/NEW_ISSUES.json ] || { echo "No proposals written."; exit 0; }
+          jq -c '.[:5][]' .auto/NEW_ISSUES.json | while read -r item; do
+            title=$(jq -r .title <<< "$item")
+            area=$(jq -r '.area // "backend"' <<< "$item")
+            if grep -Fq "$title" .auto/EXISTING.md; then echo "dup: $title"; continue; fi
+            jq -r .body <<< "$item" > .auto/body.md
+            gh issue create --title "$title" --body-file .auto/body.md --label roadmap --label "area:$area"
+          done

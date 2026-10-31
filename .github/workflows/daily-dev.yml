@@ -1,0 +1,223 @@
+name: Daily dev
+
+# Every day: pick the next roadmap issue, let Claude implement it on a branch,
+# run the tests, and open a PR authored by the repo owner (via BOT_PAT).
+# Guardrails:
+#   - kill switch: repo variable AUTOMATION_ENABLED must be "true"
+#   - only issues labeled `roadmap` (only maintainers can label); `community` issues are left to humans
+#   - at most MAX_OPEN_PRS automated PRs open at once (default 3)
+#   - Claude can only read/edit files and run npm/npx/node; git and GitHub are handled by this workflow
+#   - changes under .github/ are discarded
+#   - failing tests => PR is opened as a draft and labeled needs-attention
+# Self-healing:
+#   - a blocked issue is retried automatically (up to 2 retries), with the previous
+#     blocker explanation given to Claude so it can find a workaround
+#   - after 3 failed attempts the issue gets `needs-human` and is skipped
+#   - stale `in-progress` labels on closed issues are cleaned up
+
+on:
+  schedule:
+    - cron: "7 11 * * *" # every day, 16:07 Pakistan time (offset from wp-headless-kit)
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to work on (optional)"
+        required: false
+
+concurrency:
+  group: daily-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  implement:
+    if: vars.AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Pick next issue
+        id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          for l in "retry-1:FEF2C0" "retry-2:FBCA04" "needs-human:B60205"; do
+            gh label create "${l%%:*}" --color "${l##*:}" --force >/dev/null 2>&1 || true
+          done
+          # Housekeeping: closed issues should not keep the in-progress label.
+          for n in $(gh issue list --state closed --label in-progress --limit 100 --json number --jq '.[].number'); do
+            gh issue edit "$n" --remove-label in-progress >/dev/null || true
+          done
+
+          max="${{ vars.MAX_OPEN_PRS || 3 }}"
+          open=$(gh pr list --label automated --state open --json number --jq 'length')
+          if [ "$open" -ge "$max" ]; then
+            echo "Skipping: $open automated PRs already open (limit $max). Review/merge some first."
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          retry=false
+          if [ -n "${{ github.event.inputs.issue }}" ]; then
+            num="${{ github.event.inputs.issue }}"
+          else
+            issues=$(gh issue list --label roadmap --state open --limit 300 --json number,labels)
+            # 1) retry a blocked issue that still has attempts left
+            num=$(jq -r '[.[] | [.labels[].name] as $l | select(($l|index("blocked")) and ($l|index("needs-human")|not) and ($l|index("in-progress")|not) and ($l|index("community")|not))] | sort_by(.number) | .[0].number // empty' <<< "$issues")
+            if [ -n "$num" ]; then
+              retry=true
+            else
+              # 2) otherwise the next fresh issue
+              num=$(jq -r '[.[] | [.labels[].name] as $l | select(($l|index("blocked")|not) and ($l|index("in-progress")|not) and ($l|index("needs-human")|not) and ($l|index("community")|not))] | sort_by(.number) | .[0].number // empty' <<< "$issues")
+            fi
+          fi
+          if [ -z "$num" ]; then
+            echo "No eligible roadmap issues. The weekly planner will add more."
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          labels=$(gh issue view "$num" --json labels --jq '[.labels[].name] | join(",")')
+          case ",$labels," in *",roadmap,"*) ;; *) echo "Issue #$num is not labeled roadmap; refusing."; exit 1 ;; esac
+          if [ "$retry" = false ] && [[ ",$labels," == *",blocked,"* ]]; then retry=true; fi
+
+          title=$(gh issue view "$num" --json title --jq .title)
+          slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g' | cut -c1-40)
+          mkdir -p .auto
+          gh issue view "$num" --json number,title,body \
+            --jq '"# Issue #\(.number): \(.title)\n\n\(.body)"' > .auto/ISSUE.md
+
+          if [ "$retry" = true ]; then
+            if [[ ",$labels," == *",retry-1,"* ]]; then attempt=retry-2; else attempt=retry-1; fi
+            gh issue edit "$num" --remove-label blocked --add-label "$attempt" >/dev/null
+            {
+              echo
+              echo "## A previous automated attempt was blocked"
+              echo
+              echo "Its explanation (most recent comment on the issue):"
+              echo
+              gh issue view "$num" --json comments --jq '.comments[-1].body // "(no explanation recorded)"'
+              echo
+              echo "Find a way to complete this issue within the rules in CLAUDE.md, for example by choosing"
+              echo "compatible dev-dependency versions, adjusting configuration, or using an alternative tool."
+              echo "Only write .auto/BLOCKED.md if it is impossible without a human decision, and state exactly which decision is needed."
+            } >> .auto/ISSUE.md
+            echo "Retrying blocked issue #$num ($attempt)"
+          fi
+
+          {
+            echo "skip=false"
+            echo "number=$num"
+            echo "branch=auto/issue-$num-$slug"
+          } >> "$GITHUB_OUTPUT"
+          echo "title<<EOF" >> "$GITHUB_OUTPUT"; echo "$title" >> "$GITHUB_OUTPUT"; echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.pick.outputs.skip == 'false'
+        run: |
+          python -m pip install -q -r backend/requirements-dev.txt
+          (cd frontend && npm ci)
+
+      - name: Create branch
+        if: steps.pick.outputs.skip == 'false'
+        run: |
+          git checkout -B "${{ steps.pick.outputs.branch }}"
+          gh issue edit "${{ steps.pick.outputs.number }}" --add-label in-progress
+
+      - name: Implement with Claude
+        if: steps.pick.outputs.skip == 'false'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are working in the repository ${{ github.repository }}.
+            Read CLAUDE.md first and follow it exactly.
+            Your task is described in .auto/ISSUE.md. Implement it completely.
+
+            Rules:
+            - Keep the change focused on this one issue. Small, reviewable diff.
+            - Add or update tests under test/ for any behaviour change.
+            - Update README.md or docs/ if the public API changes.
+            - Run `bash scripts/check.sh` (backend lint + tests, frontend typecheck + tests + build) and fix failures before finishing.
+            - You may add dependencies (backend/requirements*.txt via pip, frontend via npm install).
+              Pick compatible versions instead of giving up. The test suite must never need API keys or network.
+            - Do NOT edit anything under .github/ and do NOT run git commands.
+            - When done, write .auto/PR.md with this exact format:
+                line 1: a Conventional Commit subject, max 72 chars (e.g. "feat(client): add retry with backoff")
+                line 2: blank
+                rest: PR description in Markdown with sections "## What", "## Why", "## How to test".
+            - If the issue is truly impossible without a human decision, write .auto/BLOCKED.md
+              explaining why and exactly what decision is needed, and make no other changes.
+          claude_args: |
+            --model sonnet
+            --max-turns 30
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(ruff:*),Bash(bash scripts/check.sh)"
+
+      - name: Verify, commit and open PR
+        if: steps.pick.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -uo pipefail
+          num="${{ steps.pick.outputs.number }}"
+          branch="${{ steps.pick.outputs.branch }}"
+
+          block() {
+            gh issue comment "$num" --body-file "$1"
+            if gh issue view "$num" --json labels --jq '[.labels[].name] | index("retry-2")' | grep -qv null; then
+              gh issue edit "$num" --add-label blocked --add-label needs-human --remove-label in-progress
+              gh issue comment "$num" --body "Automation has now tried this issue 3 times without success, so it needs a human decision. Remove the \`needs-human\` label to let it try again."
+            else
+              gh issue edit "$num" --add-label blocked --remove-label in-progress
+              echo "Issue #$num blocked; it will be retried automatically on a later run."
+            fi
+          }
+
+          if [ -f .auto/BLOCKED.md ]; then block .auto/BLOCKED.md; exit 0; fi
+
+          # Guardrail: never ship workflow or automation changes from the agent.
+          git checkout -- .github 2>/dev/null || true
+          git clean -fdq .github 2>/dev/null || true
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "The automated run finished without producing any changes for this issue." > .auto/nochange.md
+            block .auto/nochange.md; exit 0
+          fi
+
+          if bash scripts/check.sh; then tests=pass; else tests=fail; fi
+
+          subject=$(head -n1 .auto/PR.md 2>/dev/null || true)
+          [ -z "$subject" ] && subject="chore: ${{ steps.pick.outputs.title }}"
+          tail -n +3 .auto/PR.md > .auto/body.md 2>/dev/null || echo "Implements #$num." > .auto/body.md
+          printf '\n\nCloses #%s\n\n---\n_Implemented by the daily Claude workflow; reviewed by the PR review workflow. Tests: **%s**._\n' "$num" "$tests" >> .auto/body.md
+
+          git config user.name "${{ vars.GIT_AUTHOR_NAME || 'Numan Ul Haq' }}"
+          git config user.email "${{ vars.GIT_AUTHOR_EMAIL }}"
+          git add -A
+          git commit -m "$subject" -m "Closes #$num" -m "Co-authored-by: Claude <noreply@anthropic.com>"
+          git push -u origin "$branch" --force-with-lease
+
+          flags=(--label automated)
+          if [ "$tests" = fail ]; then flags+=(--draft --label needs-attention); fi
+          gh pr create --base main --head "$branch" --title "$subject" --body-file .auto/body.md "${flags[@]}"
+
+      - name: Release issue on failure
+        if: failure() && steps.pick.outputs.number != ''
+        run: gh issue edit "${{ steps.pick.outputs.number }}" --remove-label in-progress || true

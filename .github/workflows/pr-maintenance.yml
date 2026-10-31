@@ -1,0 +1,145 @@
+name: PR maintenance
+
+# Daily (before the build) and on demand: keeps automated PRs mergeable.
+# For each open PR labeled `automated` that conflicts with main or is behind it:
+#   1. merge main into the PR branch
+#   2. if there are conflicts, Claude resolves them (no git access; the workflow does git)
+#   3. typecheck + tests must pass and no conflict markers may remain, then the branch is pushed
+#   otherwise the PR is labeled needs-attention with an explanation.
+
+on:
+  schedule:
+    - cron: "37 10 * * *" # 15:37 Pakistan time, 30 min before the daily build
+  workflow_dispatch:
+
+concurrency:
+  group: pr-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  find:
+    if: vars.AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prs: ${{ steps.f.outputs.prs }}
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+      REPO: ${{ github.repository }}
+    steps:
+      - id: f
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=()
+          for n in $(gh pr list --repo "$REPO" --label automated --state open --json number --jq '.[].number'); do
+            state=unknown
+            for i in 1 2 3 4 5; do
+              state=$(gh api "repos/$REPO/pulls/$n" --jq .mergeable_state)
+              [ "$state" != "unknown" ] && break
+              sleep 4
+            done
+            echo "#$n: $state"
+            case "$state" in dirty|behind) out+=("$n") ;; esac
+          done
+          json=$(printf '%s\n' "${out[@]:-}" | jq -Rsc 'split("\n") | map(select(length>0) | tonumber)')
+          echo "PRs to update: $json"
+          echo "prs=$json" >> "$GITHUB_OUTPUT"
+
+  update:
+    needs: find
+    if: needs.find.outputs.prs != '' && needs.find.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.find.outputs.prs) }}
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+      REPO: ${{ github.repository }}
+      PR: ${{ matrix.pr }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Merge main into the PR branch
+        id: merge
+        shell: bash
+        run: |
+          set -uo pipefail
+          branch=$(gh pr view "$PR" --repo "$REPO" --json headRefName --jq .headRefName)
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git config user.name "${{ vars.GIT_AUTHOR_NAME || 'Numan Ul Haq' }}"
+          git config user.email "${{ vars.GIT_AUTHOR_EMAIL }}"
+          git checkout -B "$branch" "origin/$branch"
+          mkdir -p .auto
+          if git merge --no-edit origin/main; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            { echo "# Merge conflicts in PR #$PR (branch $branch, merging main)"; echo; git diff --name-only --diff-filter=U | sed 's/^/- /'; } > .auto/CONFLICTS.md
+            cat .auto/CONFLICTS.md
+          fi
+
+      - name: Resolve conflicts with Claude
+        if: steps.merge.outputs.conflicts == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            A merge of `main` into the branch of PR #${{ matrix.pr }} stopped with conflicts.
+            The conflicted files are listed in .auto/CONFLICTS.md. Read CLAUDE.md first.
+
+            - Resolve every conflict so that BOTH sides' intent is kept (usually both added exports,
+              README table rows, imports or tests — keep all of them, de-duplicated, in a sensible order).
+            - Remove all conflict markers (<<<<<<<, =======, >>>>>>>).
+            - If frontend/package-lock.json conflicts: resolve frontend/package.json first, then run `npm install` in frontend/.
+            - Install deps if needed (`pip install -r backend/requirements-dev.txt`, `npm ci` in frontend/), then run
+              `bash scripts/check.sh` and fix anything the merge broke.
+            - Do NOT run git commands and do NOT edit anything under .github/.
+            - If it cannot be resolved safely, write .auto/BLOCKED.md explaining why.
+          claude_args: |
+            --model sonnet
+            --max-turns 25
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(ruff:*),Bash(bash scripts/check.sh)"
+
+      - name: Verify and push
+        shell: bash
+        run: |
+          set -uo pipefail
+          branch="${{ steps.merge.outputs.branch }}"
+          fail() {
+            gh pr edit "$PR" --repo "$REPO" --add-label needs-attention >/dev/null || true
+            gh pr comment "$PR" --repo "$REPO" --body "PR maintenance could not bring this branch up to date with \`main\`: $1"
+            exit 0
+          }
+          [ -f .auto/BLOCKED.md ] && fail "$(cat .auto/BLOCKED.md)"
+          git checkout -- .github 2>/dev/null || true
+          if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- . >/dev/null 2>&1; then fail "conflict markers remain."; fi
+          python -m pip install -q -r backend/requirements-dev.txt
+          (cd frontend && (npm ci || npm install --no-audit --no-fund))
+          bash scripts/check.sh || fail "checks fail after merging main."
+          git add -A
+          if [ -f .git/MERGE_HEAD ]; then git commit --no-edit || fail "could not commit the merge."; fi
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$branch" || fail "push was rejected."
+          gh pr edit "$PR" --repo "$REPO" --remove-label needs-attention >/dev/null 2>&1 || true
+          gh pr comment "$PR" --repo "$REPO" --body "🔄 Updated with the latest \`main\` by PR maintenance$([ "${{ steps.merge.outputs.conflicts }}" = true ] && echo ' (merge conflicts resolved with Claude)'). Tests pass."

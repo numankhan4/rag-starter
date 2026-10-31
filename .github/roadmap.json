@@ -1,0 +1,152 @@
+[
+  {
+    "area": "backend",
+    "title": "Settings via environment variables",
+    "body": "## Goal\nAdd `app/settings.py` (pydantic-settings or plain dataclass + os.environ) for CORS origins, chunk size/overlap, top-k default and provider selection; use it in `create_app`.\n\n## Acceptance criteria\n- Defaults keep current behaviour\n- Tests cover env overrides\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "backend",
+    "title": "Structured JSON logging and request IDs",
+    "body": "## Goal\nAdd a logging setup that emits JSON lines and a middleware that sets/propagates an `X-Request-ID` header.\n\n## Acceptance criteria\n- Request ID echoed in responses\n- Test asserts header round-trip\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "backend",
+    "title": "Consistent error responses",
+    "body": "## Goal\nReturn errors as `{ \"error\": { \"code\", \"message\" } }` for validation, not-found and unexpected errors, documented in OpenAPI.\n\n## Acceptance criteria\n- Tests for 404, 422 and 500 shapes\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "backend",
+    "title": "Markdown and HTML loaders",
+    "body": "## Goal\nAdd `app/loaders.py` with `load_markdown` and `load_html` that turn content into clean text plus metadata (title, headings), and an `/ingest/file` endpoint accepting `.md`, `.html`, `.txt` uploads.\n\n## Acceptance criteria\n- No network in tests\n- Script/style tags stripped from HTML\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "backend",
+    "title": "PDF loader (optional dependency)",
+    "body": "## Goal\nSupport `.pdf` uploads via `pypdf` as an optional dependency; return a clear 415 error when it isn't installed.\n\n## Acceptance criteria\n- Test with a tiny generated PDF fixture\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "Recursive, heading-aware chunking",
+    "body": "## Goal\nAdd a chunking strategy that splits on headings, then paragraphs, then sentences before falling back to word windows; keep the current strategy as default and select via settings.\n\n## Acceptance criteria\n- Chunks never exceed the size limit\n- Tests on a Markdown fixture\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "Chunk metadata and source spans",
+    "body": "## Goal\nStore `start`/`end` character offsets and the nearest heading for each chunk and return them in `/query` sources.\n\n## Acceptance criteria\n- Offsets map back to the original text in tests\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "Persistent SQLite vector store",
+    "body": "## Goal\nAdd `SQLiteVectorStore` (stdlib `sqlite3`, vectors as JSON or float blobs, brute-force cosine) selectable via settings, so data survives restarts.\n\n## Acceptance criteria\n- Same test suite runs against both stores\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "BM25 keyword index and hybrid search",
+    "body": "## Goal\nImplement a small BM25 index and a hybrid search that merges BM25 and vector scores with reciprocal rank fusion; expose `mode=vector|keyword|hybrid` on `/query`.\n\n## Acceptance criteria\n- Tests show hybrid fixes a keyword-only query\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "Metadata filters on query",
+    "body": "## Goal\nAllow `/query` to filter by `doc_id` list and title substring before ranking.\n\n## Acceptance criteria\n- Tests for each filter\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "Voyage AI embeddings adapter",
+    "body": "## Goal\nAdd `VoyageEmbedder` behind the `Embedder` protocol using `httpx`, enabled when `VOYAGE_API_KEY` is set; HashingEmbedder remains the default.\n\n## Acceptance criteria\n- HTTP mocked in tests (no network)\n- README documents the env var\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "retrieval",
+    "title": "OpenAI-compatible embeddings adapter",
+    "body": "## Goal\nAdd an embeddings adapter for any OpenAI-compatible `/v1/embeddings` endpoint (base URL + key + model via env).\n\n## Acceptance criteria\n- Mocked HTTP tests\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "llm",
+    "title": "Claude answerer",
+    "body": "## Goal\nAdd `ClaudeAnswerer` (Anthropic Messages API via `httpx`) that answers only from the retrieved sources, cites them as `[n]`, and says it doesn't know when sources don't support an answer. Enabled when `ANTHROPIC_API_KEY` is set.\n\n## Acceptance criteria\n- Prompt template in its own module\n- Mocked HTTP tests, including the refusal path\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "llm",
+    "title": "Streaming answers over SSE",
+    "body": "## Goal\nAdd `POST /query/stream` returning Server-Sent Events (`sources`, `token`, `done`) for answerers that support streaming; the extractive answerer streams sentence by sentence.\n\n## Acceptance criteria\n- Test reads the event stream with TestClient\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "llm",
+    "title": "Citation validation",
+    "body": "## Goal\nPost-process answers so every `[n]` refers to an existing source and strip invalid ones; report `unsupported: true` when no valid citation remains.\n\n## Acceptance criteria\n- Unit tests for valid, invalid and missing citations\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "llm",
+    "title": "Prompt-injection guardrail for retrieved text",
+    "body": "## Goal\nWrap retrieved chunks in clearly delimited, escaped blocks and instruct the model to treat them as data; add tests that injected instructions in documents are passed through as quoted content.\n\n## Acceptance criteria\n- Tests with a malicious fixture document\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "frontend",
+    "title": "Streaming chat UI",
+    "body": "## Goal\nTurn the ask form into a chat thread that renders `/query/stream` events incrementally, with a stop button and accessible live region.\n\n## Acceptance criteria\n- Keyboard accessible\n- Falls back to `/query` when streaming is unavailable\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "frontend",
+    "title": "Source preview panel",
+    "body": "## Goal\nClicking a citation opens a side panel with the full chunk, its document title and score; Esc closes it and focus returns to the citation.\n\n## Acceptance criteria\n- Focus management tested manually and documented\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "frontend",
+    "title": "Document manager",
+    "body": "## Goal\nList ingested documents (new `GET /documents` endpoint) with chunk counts and a delete button with confirmation.\n\n## Acceptance criteria\n- Backend endpoint + tests\n- UI updates after delete\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "frontend",
+    "title": "File upload with drag and drop",
+    "body": "## Goal\nUpload `.md/.html/.txt/.pdf` files to `/ingest/file` with progress and error states.\n\n## Acceptance criteria\n- Works with keyboard (file input) as well as drag and drop\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "frontend",
+    "title": "Theme toggle and design polish",
+    "body": "## Goal\nAdd a light/dark/system theme toggle stored in `localStorage` (guarded), refine spacing and typography, and add an empty state with example questions.\n\n## Acceptance criteria\n- No layout shift on load\n- Contrast meets WCAG AA\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "evals",
+    "title": "Retrieval evaluation harness",
+    "body": "## Goal\nAdd `backend/evals/` with a small fixture corpus + question set and a script computing recall@k and MRR for the current pipeline; print a table.\n\n## Acceptance criteria\n- Runs offline in < 10 s\n- Documented in docs/evals.md\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "evals",
+    "title": "Answer faithfulness checks",
+    "body": "## Goal\nExtend the eval harness with a simple faithfulness metric: share of answer sentences whose words are mostly covered by cited sources.\n\n## Acceptance criteria\n- Unit tests for the metric\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "evals",
+    "title": "Compare chunking strategies in evals",
+    "body": "## Goal\nRun the harness for each chunking strategy and chunk size, and write results to `docs/evals.md`.\n\n## Acceptance criteria\n- Table committed to docs\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "infra",
+    "title": "Docker Compose with Postgres + pgvector",
+    "body": "## Goal\nAdd a pgvector-backed store adapter and a compose profile running Postgres with the extension; keep in-memory as default.\n\n## Acceptance criteria\n- Adapter unit-tested with a fake connection\n- `docker compose --profile pgvector up` documented\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "infra",
+    "title": "API key auth and rate limiting",
+    "body": "## Goal\nOptional `API_KEYS` env var enabling `Authorization: Bearer` checks and a simple in-memory token-bucket rate limiter.\n\n## Acceptance criteria\n- Disabled by default\n- Tests for 401 and 429\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "docs",
+    "title": "Deploy guide: Fly.io / Render + Vercel",
+    "body": "## Goal\nWrite `docs/deploy.md` covering backend on Fly.io or Render and frontend on Vercel, including env vars and CORS.\n\n## Acceptance criteria\n- Linked from README\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "docs",
+    "title": "Architecture deep-dive",
+    "body": "## Goal\nWrite `docs/architecture.md` explaining each pipeline stage, the protocols, and how to add a provider, with a sequence diagram.\n\n## Acceptance criteria\n- Linked from README\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "docs",
+    "title": "WordPress connector (via REST API)",
+    "body": "## Goal\nAdd a script `backend/scripts/ingest_wordpress.py` that pulls posts from a WordPress site's REST API (paginated) and ingests them; link to wp-headless-kit for the JS side.\n\n## Acceptance criteria\n- HTTP mocked in tests\n- README section\n- `bash scripts/check.sh` passes"
+  },
+  {
+    "area": "docs",
+    "title": "Launch article draft: building a RAG starter you can read in an afternoon",
+    "body": "## Goal\nWrite `docs/articles/introducing-rag-starter.md` (900–1300 words) on the design: offline defaults, protocols, citations, evals. The maintainer publishes it.\n\n## Acceptance criteria\n- Code samples match the current API\n- `bash scripts/check.sh` passes"
+  }
+]

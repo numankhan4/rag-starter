@@ -1,0 +1,97 @@
+name: Release
+
+# Weekly (Sunday) and on demand: if feat/fix commits landed since the last tag,
+# publish a GitHub Release with generated notes.
+#   - first run: releases the current version from frontend/package.json (v0.1.0)
+#   - afterwards (0.x): feat or breaking -> minor bump, fix/perf -> patch bump,
+#     docs/chore/ci-only weeks -> no release
+# The version bump is committed to main as the owner (BOT_PAT); if branch protection
+# rejects that push, the release is tagged without the package.json bump.
+
+on:
+  schedule:
+    - cron: "13 12 * * 0" # Sundays, 17:13 Pakistan time
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: vars.AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.BOT_PAT }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Decide version
+        id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./frontend/package.json').version")
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -z "$last" ]; then
+            echo "No previous release: releasing v$current"
+            echo "version=$current" >> "$GITHUB_OUTPUT"; echo "bump=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          subjects=$(git log "$last"..HEAD --format=%s)
+          if [ -z "$subjects" ]; then echo "Nothing since $last."; echo "version=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          kind=none
+          if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subjects" || git log "$last"..HEAD --format=%b | grep -q 'BREAKING CHANGE'; then kind=minor
+          elif grep -qE '^feat(\([^)]*\))?:' <<< "$subjects"; then kind=minor
+          elif grep -qE '^(fix|perf)(\([^)]*\))?:' <<< "$subjects"; then kind=patch
+          fi
+          if [ "$kind" = none ]; then echo "Only docs/chore/ci changes since $last; no release."; echo "version=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          base=${last#v}
+          IFS=. read -r MA MI PA <<< "$base"
+          if [ "$kind" = minor ]; then MI=$((MI+1)); PA=0; else PA=$((PA+1)); fi
+          echo "version=$MA.$MI.$PA" >> "$GITHUB_OUTPUT"; echo "bump=true" >> "$GITHUB_OUTPUT"
+          echo "Next: v$MA.$MI.$PA ($kind) after $last"
+
+      - name: Verify build
+        if: steps.v.outputs.version != ''
+        run: |
+          python -m pip install -q -r backend/requirements-dev.txt
+          (cd frontend && npm ci)
+          bash scripts/check.sh
+
+      - name: Bump version and publish release
+        if: steps.v.outputs.version != ''
+        shell: bash
+        run: |
+          set -uo pipefail
+          v="${{ steps.v.outputs.version }}"
+          if [ "${{ steps.v.outputs.bump }}" = true ]; then
+            git config user.name "${{ vars.GIT_AUTHOR_NAME || 'Numan Ul Haq' }}"
+            git config user.email "${{ vars.GIT_AUTHOR_EMAIL }}"
+            (cd frontend && npm version "$v" --no-git-tag-version >/dev/null)
+            sed -i -E "s/^version = \"[^\"]+\"/version = \"$v\"/" backend/pyproject.toml
+            git add frontend/package.json frontend/package-lock.json backend/pyproject.toml
+            git commit -m "chore(release): v$v" -m "Co-authored-by: Claude <noreply@anthropic.com>"
+            if ! git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:main; then
+              echo "::warning::Could not push the version bump to main; tagging the current main instead."
+              git reset --hard origin/main
+            fi
+          fi
+          git tag -a "v$v" -m "v$v"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "v$v"
+          gh release create "v$v" --repo "$REPO" --title "v$v" --generate-notes --latest

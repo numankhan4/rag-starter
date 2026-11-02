@@ -96,7 +96,7 @@ jobs:
 
           labels=$(gh issue view "$num" --json labels --jq '[.labels[].name] | join(",")')
           case ",$labels," in *",roadmap,"*) ;; *) echo "Issue #$num is not labeled roadmap; refusing."; exit 1 ;; esac
-          if [ "$retry" = false ] && [[ ",$labels," == *",blocked,"* ]]; then retry=true; fi
+          if [ "$retry" = false ] && [[ ",$labels," == *",blocked,"* || ",$labels," == *",retry-1,"* || ",$labels," == *",retry-2,"* ]]; then retry=true; fi
 
           title=$(gh issue view "$num" --json title --jq .title)
           slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g' | cut -c1-40)
@@ -105,7 +105,7 @@ jobs:
             --jq '"# Issue #\(.number): \(.title)\n\n\(.body)"' > .auto/ISSUE.md
 
           if [ "$retry" = true ]; then
-            if [[ ",$labels," == *",retry-1,"* ]]; then attempt=retry-2; else attempt=retry-1; fi
+            if [[ ",$labels," == *",retry-1,"* || ",$labels," == *",retry-2,"* ]]; then attempt=retry-2; else attempt=retry-1; fi
             gh issue edit "$num" --remove-label blocked --add-label "$attempt" >/dev/null
             {
               echo
@@ -143,6 +143,9 @@ jobs:
 
       - name: Implement with Claude
         if: steps.pick.outputs.skip == 'false'
+        # The action fails when Claude finishes past --max-turns even if the work is done;
+        # the next step judges the actual result (changes + tests), so don't stop here.
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -159,6 +162,7 @@ jobs:
             - Run `bash scripts/check.sh` (backend lint + tests, frontend typecheck + tests + build) and fix failures before finishing.
             - You may add dependencies (backend/requirements*.txt via pip, frontend via npm install).
               Pick compatible versions instead of giving up. The test suite must never need API keys or network.
+            - Work efficiently: prefer tools' auto-fix modes and batch edits over many small steps.
             - Do NOT edit anything under .github/ and do NOT run git commands.
             - When done, write .auto/PR.md with this exact format:
                 line 1: a Conventional Commit subject, max 72 chars (e.g. "feat(client): add retry with backoff")
@@ -168,7 +172,7 @@ jobs:
               explaining why and exactly what decision is needed, and make no other changes.
           claude_args: |
             --model sonnet
-            --max-turns 30
+            --max-turns 60
             --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(ruff:*),Bash(bash scripts/check.sh)"
 
       - name: Verify, commit and open PR
@@ -218,6 +222,17 @@ jobs:
           if [ "$tests" = fail ]; then flags+=(--draft --label needs-attention); fi
           gh pr create --base main --head "$branch" --title "$subject" --body-file .auto/body.md "${flags[@]}"
 
-      - name: Release issue on failure
+      - name: Count failed run as an attempt
         if: failure() && steps.pick.outputs.number != ''
-        run: gh issue edit "${{ steps.pick.outputs.number }}" --remove-label in-progress || true
+        shell: bash
+        run: |
+          n="${{ steps.pick.outputs.number }}"
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          labels=$(gh issue view "$n" --json labels --jq '[.labels[].name] | join(",")' || true)
+          if [[ ",$labels," == *",retry-2,"* ]]; then
+            gh issue edit "$n" --remove-label in-progress --add-label blocked --add-label needs-human || true
+            gh issue comment "$n" --body "The automated run failed again ([log]($url)). After 3 attempts this issue needs a human decision; remove \`needs-human\` to let automation try again." || true
+          else
+            gh issue edit "$n" --remove-label in-progress --add-label blocked || true
+            gh issue comment "$n" --body "The automated run failed ([log]($url)). It will be retried automatically on a later run." || true
+          fi

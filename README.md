@@ -49,6 +49,9 @@ bash scripts/setup-dev.sh
 | `DELETE` | `/documents/{doc_id}` | — | `{ removed_chunks }` |
 | `GET` | `/health` | — | `{ status, chunks, documents }` |
 
+Errors (404, 422, 500) always use one shape, documented in OpenAPI at `/docs`:
+`{ "error": { "code": "not_found" | "validation_error" | "internal_error", "message": "..." } }`.
+
 Every response carries an `X-Request-ID` header: a valid incoming value (letters, digits, `._-`, up to 128 chars)
 is echoed back, otherwise one is generated. Logs are emitted as JSON lines (one per request, including
 `request_id`, `method`, `path`, `status`, `duration_ms`).

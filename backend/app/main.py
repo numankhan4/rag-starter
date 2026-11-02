@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_text
 from .embeddings import HashingEmbedder
+from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
 from .store import InMemoryVectorStore
 
 
@@ -46,9 +47,17 @@ class QueryResponse(BaseModel):
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(title="rag-starter", version="0.1.0")
     origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[REQUEST_ID_HEADER],
+    )
+    app.add_middleware(RequestIDMiddleware)
 
     embedder = HashingEmbedder()
     store = InMemoryVectorStore()

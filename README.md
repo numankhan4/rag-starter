@@ -45,7 +45,7 @@ bash scripts/setup-dev.sh
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
 | `POST` | `/ingest` | `{ doc_id, text, title? }` | `{ doc_id, chunks }` — re-ingesting replaces the document |
-| `POST` | `/ingest/file` | multipart: `file` (`.md`, `.html`, `.txt`), optional `doc_id` (default: filename), `title` | `{ doc_id, chunks }` — markup stripped, script/style removed, title from `<title>`/first heading |
+| `POST` | `/ingest/file` | multipart: `file` (`.md`, `.html`, `.txt`, `.pdf` — PDF needs the optional `pypdf` package, otherwise 415), optional `doc_id` (default: filename), `title` | `{ doc_id, chunks }` — markup stripped, script/style removed, title from `<title>`/first heading |
 | `POST` | `/query` | `{ question, k? }` | `{ answer, citations, sources[] }` |
 | `DELETE` | `/documents/{doc_id}` | — | `{ removed_chunks }` |
 | `GET` | `/health` | — | `{ status, chunks, documents }` |

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from pathlib import PurePath
+from typing import Annotated
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_text
 from .embeddings import HashingEmbedder
+from .loaders import LOADERS
 from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
 from .settings import Settings
 from .store import InMemoryVectorStore
@@ -76,6 +80,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store.add(chunks, embedder.embed([c.text for c in chunks]))
         titles[req.doc_id] = req.title
         return IngestResponse(doc_id=req.doc_id, chunks=len(chunks))
+
+    @app.post("/ingest/file", response_model=IngestResponse)
+    async def ingest_file(
+        file: Annotated[UploadFile, File()],
+        doc_id: Annotated[str | None, Form(max_length=200)] = None,
+        title: Annotated[str | None, Form()] = None,
+    ) -> IngestResponse:
+        name = PurePath(file.filename or "").name
+        loader = LOADERS.get(PurePath(name).suffix.lower())
+        if loader is None:
+            raise HTTPException(status_code=415, detail="Supported files: .md, .html, .txt")
+        try:
+            content = (await file.read()).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=422, detail="File must be UTF-8 text") from None
+        loaded = loader(content)
+        return ingest(
+            IngestRequest(
+                doc_id=doc_id or name or "upload",
+                text=loaded.text or " ",
+                title=title or loaded.title or name or None,
+            )
+        )
 
     @app.delete("/documents/{doc_id}")
     def delete(doc_id: str) -> dict[str, int]:

@@ -24,8 +24,9 @@ async function post<T>(path: string, body: unknown, base = API_URL, fetchImpl: t
   if (!res.ok) {
     let detail = `Request failed with ${res.status}`;
     try {
-      const data = (await res.json()) as { detail?: unknown };
-      if (typeof data.detail === "string") detail = data.detail;
+      const data = (await res.json()) as { error?: { message?: unknown }; detail?: unknown };
+      if (typeof data.error?.message === "string") detail = data.error.message;
+      else if (typeof data.detail === "string") detail = data.detail;
     } catch {
       /* non-JSON error */
     }

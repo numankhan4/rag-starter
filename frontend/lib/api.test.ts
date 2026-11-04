@@ -23,6 +23,6 @@ test("query posts JSON and surfaces API error details", async () => {
   assert.deepEqual(JSON.parse(calls[0]!.body), { question: "what?", k: 3 });
   assert.equal(res.answer, "a [1]");
 
-  const bad = (async () => new Response(JSON.stringify({ detail: "Document has no text" }), { status: 422 })) as typeof fetch;
+  const bad = (async () => new Response(JSON.stringify({ error: { code: "validation_error", message: "Document has no text" } }), { status: 422 })) as typeof fetch;
   await assert.rejects(query("x", 4, "http://api", bad), /Document has no text/);
 });

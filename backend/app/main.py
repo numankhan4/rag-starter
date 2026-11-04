@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+from http import HTTPStatus
 from pathlib import PurePath
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_text
@@ -49,10 +54,56 @@ class QueryResponse(BaseModel):
     sources: list[Source]
 
 
+class ErrorBody(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorBody
+
+
+_ERRORS: dict[int | str, dict[str, object]] = {
+    status: {"model": ErrorResponse, "description": desc}
+    for status, desc in ((404, "Not found"), (422, "Validation error"), (500, "Unexpected error"))
+}
+
+
+def _error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+
+
+def _code_for(status: int) -> str:
+    try:
+        return HTTPStatus(status).name.lower()
+    except ValueError:
+        return "error"
+
+
+def _install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(StarletteHTTPException)
+    async def on_http(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return _error(exc.status_code, _code_for(exc.status_code), str(exc.detail))
+
+    @app.exception_handler(RequestValidationError)
+    async def on_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        parts = [
+            f"{'.'.join(str(p) for p in e['loc'] if p != 'body')}: {e['msg']}".lstrip(": ")
+            for e in exc.errors()
+        ]
+        return _error(422, "validation_error", "; ".join(parts) or "Invalid request")
+
+    @app.exception_handler(Exception)
+    async def on_unexpected(_: Request, exc: Exception) -> JSONResponse:
+        logging.getLogger("app.error").error("unhandled exception", exc_info=exc)
+        return _error(500, "internal_error", "Internal server error")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     configure_logging()
-    app = FastAPI(title="rag-starter", version="0.1.0")
+    app = FastAPI(title="rag-starter", version="0.1.0", responses=_ERRORS)
+    _install_error_handlers(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),

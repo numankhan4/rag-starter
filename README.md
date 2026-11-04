@@ -54,6 +54,19 @@ Every response carries an `X-Request-ID` header: a valid incoming value (letters
 is echoed back, otherwise one is generated. Logs are emitted as JSON lines (one per request, including
 `request_id`, `method`, `path`, `status`, `duration_ms`).
 
+## Configuration
+
+The backend reads these optional environment variables (see `backend/app/settings.py`); invalid values fail at startup.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `CHUNK_SIZE` | `120` | Words per chunk |
+| `CHUNK_OVERLAP` | `20` | Words shared between chunks (< `CHUNK_SIZE`) |
+| `TOP_K` | `4` | Default number of sources when `/query` omits `k` (1–20) |
+| `EMBEDDER` | `hashing` | Embedding provider (only `hashing`, offline, for now) |
+| `ANSWERER` | `extractive` | Answer provider (only `extractive`, offline, for now) |
+
 ## Development
 
 ```bash

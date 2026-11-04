@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_text
 from .embeddings import HashingEmbedder
-from .loaders import LOADERS
+from .loaders import LOADERS, Loaded, PdfReadError, PdfUnavailableError, load_pdf
 from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
 from .settings import Settings
 from .store import InMemoryVectorStore
@@ -99,6 +99,15 @@ def _install_error_handlers(app: FastAPI) -> None:
         return _error(500, "internal_error", "Internal server error")
 
 
+async def _load_pdf_upload(file: UploadFile) -> Loaded:
+    try:
+        return load_pdf(await file.read())
+    except PdfUnavailableError as e:
+        raise HTTPException(status_code=415, detail=str(e)) from None
+    except PdfReadError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     configure_logging()
@@ -139,14 +148,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title: Annotated[str | None, Form()] = None,
     ) -> IngestResponse:
         name = PurePath(file.filename or "").name
-        loader = LOADERS.get(PurePath(name).suffix.lower())
-        if loader is None:
-            raise HTTPException(status_code=415, detail="Supported files: .md, .html, .txt")
-        try:
-            content = (await file.read()).decode("utf-8-sig")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=422, detail="File must be UTF-8 text") from None
-        loaded = loader(content)
+        suffix = PurePath(name).suffix.lower()
+        if suffix == ".pdf":
+            loaded = await _load_pdf_upload(file)
+        else:
+            loader = LOADERS.get(suffix)
+            if loader is None:
+                raise HTTPException(status_code=415, detail="Supported files: .md, .html, .txt, .pdf")
+            try:
+                content = (await file.read()).decode("utf-8-sig")
+            except UnicodeDecodeError:
+                raise HTTPException(status_code=422, detail="File must be UTF-8 text") from None
+            loaded = loader(content)
         return ingest(
             IngestRequest(
                 doc_id=doc_id or name or "upload",

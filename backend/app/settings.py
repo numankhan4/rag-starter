@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 EMBEDDERS = ("hashing",)
+CHUNKERS = ("words", "recursive")
 ANSWERERS = ("extractive",)
 
 
@@ -32,6 +33,7 @@ class Settings:
     cors_origins: tuple[str, ...] = ("http://localhost:3000",)
     chunk_size: int = 120
     chunk_overlap: int = 20
+    chunker: str = "words"
     top_k: int = 4
     embedder: str = "hashing"
     answerer: str = "extractive"
@@ -45,6 +47,7 @@ class Settings:
             cors_origins=origins or cls.cors_origins,
             chunk_size=_int(env, "CHUNK_SIZE", cls.chunk_size),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", cls.chunk_overlap),
+            chunker=_choice(env, "CHUNKER", cls.chunker, CHUNKERS),
             top_k=_int(env, "TOP_K", cls.top_k),
             embedder=_choice(env, "EMBEDDER", cls.embedder, EMBEDDERS),
             answerer=_choice(env, "ANSWERER", cls.answerer, ANSWERERS),

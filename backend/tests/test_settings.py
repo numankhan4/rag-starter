@@ -44,6 +44,21 @@ def test_invalid_values(env):
         Settings.from_env(env)
 
 
+def test_chunker_setting():
+    assert Settings.from_env({}).chunker == "words"
+    assert Settings.from_env({"CHUNKER": "Recursive"}).chunker == "recursive"
+    with pytest.raises(ValueError):
+        Settings.from_env({"CHUNKER": "x"})
+
+
+def test_recursive_chunker_applies_to_ingest():
+    c = TestClient(
+        create_app(Settings.from_env({"CHUNKER": "recursive", "CHUNK_SIZE": "5", "CHUNK_OVERLAP": "0"}))
+    )
+    r = c.post("/ingest", json={"doc_id": "d", "text": "# A\n\none two\n\n# B\n\nthree four"})
+    assert r.json()["chunks"] == 2
+
+
 def test_chunk_size_applies_to_ingest():
     c = TestClient(create_app(Settings.from_env({"CHUNK_SIZE": "4", "CHUNK_OVERLAP": "0"})))
     r = c.post("/ingest", json={"doc_id": "d", "text": "one two three four five six seven eight nine"})

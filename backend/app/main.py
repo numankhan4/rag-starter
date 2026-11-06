@@ -46,6 +46,9 @@ class Source(BaseModel):
     chunk: int
     score: float
     text: str
+    start: int
+    end: int
+    heading: str | None
 
 
 class QueryResponse(BaseModel):
@@ -175,6 +178,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 chunk=h.chunk.index,
                 score=round(h.score, 4),
                 text=h.chunk.text,
+                start=h.chunk.start,
+                end=h.chunk.end,
+                heading=h.chunk.heading,
             )
             for i, h in enumerate(hits, start=1)
         ]

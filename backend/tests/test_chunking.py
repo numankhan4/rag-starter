@@ -1,6 +1,22 @@
+import re
+
 import pytest
 
 from app.chunking import chunk_text
+
+
+def test_offsets_map_back_to_original_text_and_headings():
+    text = "# Intro\nalpha  beta\n\ngamma delta\n## Usage\nepsilon zeta eta theta"
+    chunks = chunk_text("d", text, size=4, overlap=1)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert re.sub(r"\s+", " ", text[c.start : c.end]) == c.text
+    assert chunks[0].heading == "Intro"
+    assert chunks[-1].heading == "Usage"
+
+
+def test_no_heading_is_none():
+    assert chunk_text("d", "just plain words")[0].heading is None
 
 
 def test_chunks_overlap_and_cover_all_words():

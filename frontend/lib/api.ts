@@ -5,6 +5,9 @@ export interface Source {
   chunk: number;
   score: number;
   text: string;
+  start: number;
+  end: number;
+  heading: string | null;
 }
 
 export interface QueryResponse {

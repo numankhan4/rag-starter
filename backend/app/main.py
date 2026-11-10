@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .answer import ExtractiveAnswerer
-from .chunking import chunk_text
+from .chunking import chunk_document
 from .embeddings import HashingEmbedder
 from .loaders import LOADERS, Loaded, PdfReadError, PdfUnavailableError, load_pdf
 from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
@@ -134,7 +134,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/ingest", response_model=IngestResponse)
     def ingest(req: IngestRequest) -> IngestResponse:
         store.delete_document(req.doc_id)
-        chunks = chunk_text(req.doc_id, req.text, settings.chunk_size, settings.chunk_overlap)
+        chunks = chunk_document(
+            settings.chunker, req.doc_id, req.text, settings.chunk_size, settings.chunk_overlap
+        )
         if not chunks:
             raise HTTPException(status_code=422, detail="Document has no text")
         store.add(chunks, embedder.embed([c.text for c in chunks]))

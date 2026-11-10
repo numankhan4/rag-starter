@@ -20,7 +20,7 @@ from .embeddings import HashingEmbedder
 from .loaders import LOADERS, Loaded, PdfReadError, PdfUnavailableError, load_pdf
 from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
 from .settings import Settings
-from .store import InMemoryVectorStore
+from .store import create_store
 
 
 class IngestRequest(BaseModel):
@@ -126,13 +126,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
 
     embedder = HashingEmbedder()
-    store = InMemoryVectorStore()
+    store = create_store(settings.store, settings.sqlite_path)
     answerer = ExtractiveAnswerer()
-    titles: dict[str, str | None] = {}
 
     @app.get("/health")
     def health() -> dict[str, object]:
-        return {"status": "ok", "chunks": len(store), "documents": len(titles)}
+        return {"status": "ok", "chunks": len(store), "documents": store.document_count()}
 
     @app.post("/ingest", response_model=IngestResponse)
     def ingest(req: IngestRequest) -> IngestResponse:
@@ -143,7 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not chunks:
             raise HTTPException(status_code=422, detail="Document has no text")
         store.add(chunks, embedder.embed([c.text for c in chunks]))
-        titles[req.doc_id] = req.title
+        store.set_title(req.doc_id, req.title)
         return IngestResponse(doc_id=req.doc_id, chunks=len(chunks))
 
     @app.post("/ingest/file", response_model=IngestResponse)
@@ -178,7 +177,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         removed = store.delete_document(doc_id)
         if not removed:
             raise HTTPException(status_code=404, detail="Unknown document")
-        titles.pop(doc_id, None)
         return {"removed_chunks": removed}
 
     @app.post("/query", response_model=QueryResponse)
@@ -189,7 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             Source(
                 n=i,
                 doc_id=h.chunk.doc_id,
-                title=titles.get(h.chunk.doc_id),
+                title=store.title(h.chunk.doc_id),
                 chunk=h.chunk.index,
                 score=round(h.score, 4),
                 text=h.chunk.text,

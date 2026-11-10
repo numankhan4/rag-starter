@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -128,6 +129,31 @@ def load_markdown(md: str) -> Loaded:
 
 def load_text(text: str) -> Loaded:
     return Loaded(text=text.strip())
+
+
+class PdfUnavailableError(RuntimeError):
+    """Raised when a PDF is uploaded but the optional `pypdf` package is not installed."""
+
+
+class PdfReadError(ValueError):
+    """Raised when the uploaded bytes cannot be parsed as a PDF."""
+
+
+def load_pdf(data: bytes) -> Loaded:
+    """Extract text from a PDF (requires the optional `pypdf` dependency)."""
+    try:
+        from pypdf import PdfReader
+        from pypdf.errors import PyPdfError
+    except ImportError:
+        raise PdfUnavailableError("PDF support requires pypdf (pip install pypdf)") from None
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        info_title = reader.metadata.title if reader.metadata else None
+    except (PyPdfError, ValueError, OSError):
+        raise PdfReadError("Could not read PDF") from None
+    title = _squash(info_title) if isinstance(info_title, str) else None
+    return Loaded(text=_squash("\n\n".join(pages)), title=title or None)
 
 
 LOADERS: dict[str, Callable[[str], Loaded]] = {

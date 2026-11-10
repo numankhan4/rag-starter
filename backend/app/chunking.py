@@ -1,11 +1,12 @@
-"""Split documents into overlapping, word-based chunks."""
+"""Split documents into overlapping, word-based chunks with source spans."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-_WS = re.compile(r"\s+")
+_WORD = re.compile(r"\S+")
+_HEADING_TITLE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -13,23 +14,55 @@ class Chunk:
     doc_id: str
     index: int
     text: str
+    start: int = 0
+    end: int = 0
+    heading: str | None = None
+
+
+def _headings(text: str) -> list[tuple[int, str]]:
+    return [(m.start(), m.group(1)) for m in _HEADING_TITLE.finditer(text)]
+
+
+def _heading_at(headings: list[tuple[int, str]], pos: int) -> str | None:
+    """Return the nearest Markdown heading that starts at or before `pos`."""
+    found = None
+    for hpos, title in headings:
+        if hpos > pos:
+            break
+        found = title
+    return found
 
 
 def chunk_text(doc_id: str, text: str, size: int = 120, overlap: int = 20) -> list[Chunk]:
-    """Split `text` into chunks of `size` words, each overlapping the previous by `overlap` words."""
+    """Split `text` into chunks of `size` words, each overlapping the previous by `overlap` words.
+
+    `start`/`end` are character offsets into `text` (``text[start:end]`` is the chunk's source
+    span; chunk text has whitespace collapsed to single spaces).
+    """
     if size <= 0:
         raise ValueError("size must be positive")
     if not 0 <= overlap < size:
         raise ValueError("overlap must be >= 0 and smaller than size")
-    words = _WS.split(text.strip())
-    if words == [""]:
+    words = list(_WORD.finditer(text))
+    if not words:
         return []
+    headings = _headings(text)
     step = size - overlap
     chunks: list[Chunk] = []
-    for i, start in enumerate(range(0, len(words), step)):
-        window = words[start : start + size]
-        chunks.append(Chunk(doc_id=doc_id, index=i, text=" ".join(window)))
-        if start + size >= len(words):
+    for i, first in enumerate(range(0, len(words), step)):
+        window = words[first : first + size]
+        start, end = window[0].start(), window[-1].end()
+        chunks.append(
+            Chunk(
+                doc_id=doc_id,
+                index=i,
+                text=" ".join(w.group() for w in window),
+                start=start,
+                end=end,
+                heading=_heading_at(headings, start),
+            )
+        )
+        if first + size >= len(words):
             break
     return chunks
 
@@ -103,7 +136,38 @@ def chunk_recursive(doc_id: str, text: str, size: int = 120, overlap: int = 20) 
     if not 0 <= overlap < size:
         raise ValueError("overlap must be >= 0 and smaller than size")
     texts = [p for sec in _split_sections(text) for p in _split_piece(sec, size, overlap)]
-    return [Chunk(doc_id=doc_id, index=i, text=t) for i, t in enumerate(texts)]
+    return _with_spans(doc_id, text, texts)
+
+
+def _with_spans(doc_id: str, text: str, pieces: list[str]) -> list[Chunk]:
+    """Build chunks for `pieces` (in document order), locating each piece's words in `text`."""
+    words = list(_WORD.finditer(text))
+    tokens = [w.group() for w in words]
+    headings = _headings(text)
+    chunks: list[Chunk] = []
+    cursor = 0
+    for i, piece in enumerate(pieces):
+        target = piece.split()
+        n = len(target)
+        j = cursor
+        while j + n <= len(tokens) and tokens[j : j + n] != target:
+            j += 1
+        if j + n > len(tokens):  # not found; should not happen, keep the text without a span
+            chunks.append(Chunk(doc_id=doc_id, index=i, text=piece))
+            continue
+        start, end = words[j].start(), words[j + n - 1].end()
+        chunks.append(
+            Chunk(
+                doc_id=doc_id,
+                index=i,
+                text=piece,
+                start=start,
+                end=end,
+                heading=_heading_at(headings, start),
+            )
+        )
+        cursor = j + 1
+    return chunks
 
 
 def chunk_document(strategy: str, doc_id: str, text: str, size: int = 120, overlap: int = 20) -> list[Chunk]:

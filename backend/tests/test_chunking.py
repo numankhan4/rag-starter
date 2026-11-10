@@ -1,6 +1,22 @@
+import re
+
 import pytest
 
 from app.chunking import chunk_document, chunk_recursive, chunk_text
+
+
+def test_offsets_map_back_to_original_text_and_headings():
+    text = "# Intro\nalpha  beta\n\ngamma delta\n## Usage\nepsilon zeta eta theta"
+    chunks = chunk_text("d", text, size=4, overlap=1)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert re.sub(r"\s+", " ", text[c.start : c.end]) == c.text
+    assert chunks[0].heading == "Intro"
+    assert chunks[-1].heading == "Usage"
+
+
+def test_no_heading_is_none():
+    assert chunk_text("d", "just plain words")[0].heading is None
 
 
 def test_chunks_overlap_and_cover_all_words():
@@ -57,3 +73,11 @@ def test_chunk_document_dispatch():
     assert chunk_document("words", "d", "a b c") == chunk_text("d", "a b c")
     with pytest.raises(ValueError):
         chunk_document("nope", "d", "a")
+
+
+def test_recursive_chunks_have_spans_and_headings():
+    text = "# Intro\n\nHello  there world.\n\n## Setup\n\nInstall it. Then run it."
+    chunks = chunk_recursive("d", text, size=50, overlap=0)
+    assert [c.heading for c in chunks] == ["Intro", "Setup"]
+    for c in chunks:
+        assert " ".join(text[c.start : c.end].split()) == " ".join(c.text.split())

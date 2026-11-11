@@ -45,6 +45,22 @@ def test_extractive_answer_cites_sources():
     assert ans.citations and ans.citations[0] == 1
 
 
+def test_bm25_keyword_search_finds_exact_term():
+    _, store = build()
+    hits = store.keyword_search("pgvector", k=3)
+    assert [h.chunk.doc_id for h in hits] == ["pgvector"]
+
+
+def test_hybrid_fixes_keyword_only_query():
+    emb, store = build()
+    # A long, mostly-unrelated question hides the one rare term from the vector ranking.
+    q = "framework web server components python hints type static pgvector"
+    vec = store.search(emb.embed([q])[0], k=1)
+    hyb = store.hybrid_search(q, emb.embed([q])[0], k=3)
+    assert vec[0].chunk.doc_id != "pgvector"
+    assert "pgvector" in {h.chunk.doc_id for h in hyb}
+
+
 def test_answer_without_hits():
     ans = ExtractiveAnswerer().answer("anything", [])
     assert ans.citations == []

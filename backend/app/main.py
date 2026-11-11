@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from http import HTTPStatus
 from pathlib import PurePath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -37,6 +37,7 @@ class IngestResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     k: int | None = Field(default=None, ge=1, le=20)
+    mode: Literal["vector", "keyword", "hybrid"] = "vector"
 
 
 class Source(BaseModel):
@@ -183,7 +184,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest) -> QueryResponse:
-        hits = store.search(embedder.embed([req.question])[0], k=req.k or settings.top_k)
+        k = req.k or settings.top_k
+        if req.mode == "keyword":
+            hits = store.keyword_search(req.question, k=k)
+        elif req.mode == "hybrid":
+            hits = store.hybrid_search(req.question, embedder.embed([req.question])[0], k=k)
+        else:
+            hits = store.search(embedder.embed([req.question])[0], k=k)
         result = answerer.answer(req.question, hits)
         sources = [
             Source(

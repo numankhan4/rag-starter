@@ -10,7 +10,7 @@
     "test": "node --test --experimental-strip-types lib/*.test.ts"
   },
   "dependencies": {
-    "next": "^16.4.3",
+    "next": "^16.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

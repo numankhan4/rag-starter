@@ -46,7 +46,7 @@ bash scripts/setup-dev.sh
 | --- | --- | --- | --- |
 | `POST` | `/ingest` | `{ doc_id, text, title? }` | `{ doc_id, chunks }` — re-ingesting replaces the document |
 | `POST` | `/ingest/file` | multipart: `file` (`.md`, `.html`, `.txt`, `.pdf` — PDF needs the optional `pypdf` package, otherwise 415), optional `doc_id` (default: filename), `title` | `{ doc_id, chunks }` — markup stripped, script/style removed, title from `<title>`/first heading |
-| `POST` | `/query` | `{ question, k? }` | `{ answer, citations, sources[] }` — each source has `start`/`end` character offsets into the ingested text and the nearest preceding Markdown `heading` (or `null`) |
+| `POST` | `/query` | `{ question, k?, doc_ids?, title_contains? }` | `{ answer, citations, sources[] }` — each source has `start`/`end` character offsets into the ingested text and the nearest preceding Markdown `heading` (or `null`). Optional `doc_ids` restricts retrieval to those documents; `title_contains` keeps only documents whose title contains the substring (case-insensitive); both combine with AND, applied before ranking |
 | `DELETE` | `/documents/{doc_id}` | — | `{ removed_chunks }` |
 | `GET` | `/health` | — | `{ status, chunks, documents }` |
 

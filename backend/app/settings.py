@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-EMBEDDERS = ("hashing",)
+EMBEDDERS = ("hashing", "voyage")
 CHUNKERS = ("words", "recursive")
 ANSWERERS = ("extractive",)
 
@@ -43,13 +43,14 @@ class Settings:
         """Build settings from `env` (defaults to os.environ), validating values."""
         env = os.environ if env is None else env
         origins = tuple(o.strip() for o in env.get("CORS_ORIGINS", "").split(",") if o.strip())
+        default_embedder = "voyage" if env.get("VOYAGE_API_KEY", "").strip() else cls.embedder
         settings = cls(
             cors_origins=origins or cls.cors_origins,
             chunk_size=_int(env, "CHUNK_SIZE", cls.chunk_size),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", cls.chunk_overlap),
             chunker=_choice(env, "CHUNKER", cls.chunker, CHUNKERS),
             top_k=_int(env, "TOP_K", cls.top_k),
-            embedder=_choice(env, "EMBEDDER", cls.embedder, EMBEDDERS),
+            embedder=_choice(env, "EMBEDDER", default_embedder, EMBEDDERS),
             answerer=_choice(env, "ANSWERER", cls.answerer, ANSWERERS),
         )
         if settings.chunk_size <= 0:
@@ -58,4 +59,6 @@ class Settings:
             raise ValueError("CHUNK_OVERLAP must be >= 0 and smaller than CHUNK_SIZE")
         if not 1 <= settings.top_k <= 20:
             raise ValueError("TOP_K must be between 1 and 20")
+        if settings.embedder == "voyage" and not env.get("VOYAGE_API_KEY", "").strip():
+            raise ValueError("EMBEDDER=voyage requires VOYAGE_API_KEY")
         return settings

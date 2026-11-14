@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Collection
 
 from .chunking import Chunk
 from .embeddings import tokenize
@@ -24,11 +25,15 @@ class BM25Index:
         n, df = len(self._chunks), self._df[term]
         return math.log(1 + (n - df + 0.5) / (df + 0.5))
 
-    def search(self, query: str, k: int = 4) -> list[tuple[Chunk, float]]:
+    def search(
+        self, query: str, k: int = 4, doc_ids: Collection[str] | None = None
+    ) -> list[tuple[Chunk, float]]:
         """Top-k chunks with a positive BM25 score, best first."""
         terms = set(tokenize(query))
         scored: list[tuple[Chunk, float]] = []
         for chunk, tf, length in zip(self._chunks, self._tf, self._len, strict=True):
+            if doc_ids is not None and chunk.doc_id not in doc_ids:
+                continue
             score = 0.0
             for t in terms:
                 f = tf.get(t, 0)

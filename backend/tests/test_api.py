@@ -86,3 +86,36 @@ def test_openapi_documents_errors():
     responses = schema["paths"]["/query"]["post"]["responses"]
     assert {"404", "422", "500"} <= set(responses)
     assert "ErrorResponse" in schema["components"]["schemas"]
+
+
+def _two_docs():
+    c = client()
+    for doc_id, title in (("a", "Alpha Guide"), ("b", "Beta Notes")):
+        body = {"doc_id": doc_id, "title": title, "text": "Retrieval grounds answers in documents."}
+        c.post("/ingest", json=body)
+    return c
+
+
+def _ids(c, **filters):
+    r = c.post("/query", json={"question": "What grounds answers?", **filters})
+    assert r.status_code == 200
+    return {s["doc_id"] for s in r.json()["sources"]}
+
+
+def test_query_filter_by_doc_ids():
+    c = _two_docs()
+    assert _ids(c) == {"a", "b"}
+    assert _ids(c, doc_ids=["b"]) == {"b"}
+    assert _ids(c, doc_ids=["nope"]) == set()
+
+
+def test_query_filter_by_title_substring():
+    c = _two_docs()
+    assert _ids(c, title_contains="alpha") == {"a"}
+    assert _ids(c, title_contains="zzz") == set()
+
+
+def test_query_filters_combine():
+    c = _two_docs()
+    assert _ids(c, doc_ids=["a", "b"], title_contains="beta") == {"b"}
+    assert _ids(c, doc_ids=["a"], title_contains="beta") == set()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from http import HTTPStatus
 from pathlib import PurePath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -37,6 +37,7 @@ class IngestResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     k: int | None = Field(default=None, ge=1, le=20)
+    mode: Literal["vector", "keyword", "hybrid"] = "vector"
     doc_ids: list[str] | None = None
     title_contains: str | None = None
 
@@ -192,7 +193,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             needle = req.title_contains.lower()
             matching = {d for d, t in titles.items() if t and needle in t.lower()}
             allowed = matching if allowed is None else allowed & matching
-        hits = store.search(embedder.embed([req.question])[0], k=req.k or settings.top_k, doc_ids=allowed)
+        k = req.k or settings.top_k
+        if req.mode == "keyword":
+            hits = store.keyword_search(req.question, k=k, doc_ids=allowed)
+        elif req.mode == "hybrid":
+            hits = store.hybrid_search(req.question, embedder.embed([req.question])[0], k=k, doc_ids=allowed)
+        else:
+            hits = store.search(embedder.embed([req.question])[0], k=k, doc_ids=allowed)
         result = answerer.answer(req.question, hits)
         sources = [
             Source(

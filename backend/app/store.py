@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from .chunking import Chunk
@@ -30,9 +31,22 @@ class InMemoryVectorStore:
         self._items = [(c, v) for c, v in self._items if c.doc_id != doc_id]
         return before - len(self._items)
 
-    def search(self, query: list[float], k: int = 4, min_score: float = 0.0) -> list[Hit]:
-        """Return the top-k chunks by cosine similarity (vectors are assumed L2-normalised)."""
-        scored = [Hit(c, sum(a * b for a, b in zip(query, v, strict=True))) for c, v in self._items]
+    def search(
+        self,
+        query: list[float],
+        k: int = 4,
+        min_score: float = 0.0,
+        doc_ids: Collection[str] | None = None,
+    ) -> list[Hit]:
+        """Return the top-k chunks by cosine similarity (vectors are assumed L2-normalised).
+
+        If `doc_ids` is given, only chunks of those documents are considered.
+        """
+        scored = [
+            Hit(c, sum(a * b for a, b in zip(query, v, strict=True)))
+            for c, v in self._items
+            if doc_ids is None or c.doc_id in doc_ids
+        ]
         scored = [h for h in scored if h.score > min_score]
         scored.sort(key=lambda h: h.score, reverse=True)
         return scored[:k]

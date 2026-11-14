@@ -37,6 +37,8 @@ class IngestResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     k: int | None = Field(default=None, ge=1, le=20)
+    doc_ids: list[str] | None = None
+    title_contains: str | None = None
 
 
 class Source(BaseModel):
@@ -183,7 +185,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest) -> QueryResponse:
-        hits = store.search(embedder.embed([req.question])[0], k=req.k or settings.top_k)
+        allowed: set[str] | None = None
+        if req.doc_ids is not None:
+            allowed = set(req.doc_ids)
+        if req.title_contains:
+            needle = req.title_contains.lower()
+            matching = {d for d, t in titles.items() if t and needle in t.lower()}
+            allowed = matching if allowed is None else allowed & matching
+        hits = store.search(embedder.embed([req.question])[0], k=req.k or settings.top_k, doc_ids=allowed)
         result = answerer.answer(req.question, hits)
         sources = [
             Source(

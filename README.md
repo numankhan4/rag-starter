@@ -68,7 +68,9 @@ The backend reads these optional environment variables (see `backend/app/setting
 | `CHUNK_SIZE` | `120` | Max words per chunk |
 | `CHUNK_OVERLAP` | `20` | Words shared between chunks (< `CHUNK_SIZE`) |
 | `TOP_K` | `4` | Default number of sources when `/query` omits `k` (1–20) |
-| `EMBEDDER` | `hashing` | Embedding provider (only `hashing`, offline, for now) |
+| `EMBEDDER` | `hashing` (or `voyage` if `VOYAGE_API_KEY` is set) | `hashing` (offline) or `voyage` (Voyage AI) |
+| `VOYAGE_API_KEY` | _unset_ | Enables the Voyage AI embedder (`VoyageEmbedder`); never needed for tests or offline use |
+| `VOYAGE_MODEL` | `voyage-3.5` | Voyage embedding model |
 | `ANSWERER` | `extractive` | Answer provider (only `extractive`, offline, for now) |
 
 ## Development

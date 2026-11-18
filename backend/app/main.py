@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .answer import ExtractiveAnswerer
 from .chunking import chunk_document
-from .embeddings import HashingEmbedder
+from .embeddings import build_embedder
 from .loaders import LOADERS, Loaded, PdfReadError, PdfUnavailableError, load_pdf
 from .logging_setup import REQUEST_ID_HEADER, RequestIDMiddleware, configure_logging
 from .settings import Settings
@@ -127,7 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(RequestIDMiddleware)
 
-    embedder = HashingEmbedder()
+    embedder = build_embedder(settings.embedder)
     store = InMemoryVectorStore()
     answerer = ExtractiveAnswerer()
     titles: dict[str, str | None] = {}

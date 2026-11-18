@@ -64,6 +64,8 @@ The backend reads these optional environment variables (see `backend/app/setting
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `STORE` | `memory` | `memory` or `sqlite` (persistent, stdlib `sqlite3`, brute-force cosine) |
+| `SQLITE_PATH` | `rag.db` | Database file used when `STORE=sqlite` |
 | `CHUNKER` | `words` | `words` (fixed word windows) or `recursive` (headings, then paragraphs, sentences, words) |
 | `CHUNK_SIZE` | `120` | Max words per chunk |
 | `CHUNK_OVERLAP` | `20` | Words shared between chunks (< `CHUNK_SIZE`) |

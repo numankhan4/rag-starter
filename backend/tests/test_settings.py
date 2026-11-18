@@ -76,3 +76,15 @@ def test_cors_origin_from_env():
     c = TestClient(create_app(Settings.from_env({"CORS_ORIGINS": "http://x.test"})))
     r = c.get("/health", headers={"Origin": "http://x.test"})
     assert r.headers["access-control-allow-origin"] == "http://x.test"
+
+
+def test_store_setting_and_sqlite_persistence(tmp_path):
+    assert Settings.from_env({}).store == "memory"
+    with pytest.raises(ValueError):
+        Settings.from_env({"STORE": "x"})
+    env = {"STORE": "sqlite", "SQLITE_PATH": str(tmp_path / "api.db")}
+    c = TestClient(create_app(Settings.from_env(env)))
+    c.post("/ingest", json={"doc_id": "d", "title": "T", "text": "alpha beta gamma"})
+    c2 = TestClient(create_app(Settings.from_env(env)))
+    assert c2.get("/health").json()["documents"] == 1
+    assert c2.post("/query", json={"question": "alpha"}).json()["sources"][0]["title"] == "T"

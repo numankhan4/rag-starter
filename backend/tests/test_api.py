@@ -7,6 +7,15 @@ def client():
     return TestClient(create_app())
 
 
+def test_query_modes():
+    c = client()
+    c.post("/ingest", json={"doc_id": "a", "text": "pgvector adds vector search to Postgres."})
+    for mode in ("vector", "keyword", "hybrid"):
+        r = c.post("/query", json={"question": "pgvector", "mode": mode})
+        assert r.status_code == 200 and r.json()["sources"][0]["doc_id"] == "a"
+    assert c.post("/query", json={"question": "x", "mode": "bogus"}).status_code == 422
+
+
 def test_health():
     c = client()
     assert c.get("/health").json() == {"status": "ok", "chunks": 0, "documents": 0}

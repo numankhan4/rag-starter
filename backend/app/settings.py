@@ -9,6 +9,7 @@ from dataclasses import dataclass
 EMBEDDERS = ("hashing",)
 CHUNKERS = ("words", "recursive")
 ANSWERERS = ("extractive",)
+STORES = ("memory", "sqlite")
 
 
 def _int(env: Mapping[str, str], name: str, default: int) -> int:
@@ -37,6 +38,8 @@ class Settings:
     top_k: int = 4
     embedder: str = "hashing"
     answerer: str = "extractive"
+    store: str = "memory"
+    sqlite_path: str = "rag.db"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -51,6 +54,8 @@ class Settings:
             top_k=_int(env, "TOP_K", cls.top_k),
             embedder=_choice(env, "EMBEDDER", cls.embedder, EMBEDDERS),
             answerer=_choice(env, "ANSWERER", cls.answerer, ANSWERERS),
+            store=_choice(env, "STORE", cls.store, STORES),
+            sqlite_path=env.get("SQLITE_PATH", "").strip() or cls.sqlite_path,
         )
         if settings.chunk_size <= 0:
             raise ValueError("CHUNK_SIZE must be positive")
